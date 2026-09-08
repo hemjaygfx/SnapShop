@@ -1,0 +1,15 @@
+reviews:
+  enabled: false
+  auto_review:
+    enabled: false
+    on:
+      - pull_request: false
+
+chat:
+  enabled: false
+
+summarize:
+  enabled: false
+
+change_summary:
+  enabled: false
