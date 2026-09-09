@@ -2,6 +2,8 @@
 import "dotenv/config";
 import express from 'express';
 import cors from 'cors';
+import path from "node:path";
+import fs from "node:fs";
 import { clerkMiddleware } from '@clerk/express';
 import { clerkWebhookHandler } from './webhooks/clerk';
 import { getEnv } from './lib/env';
@@ -12,7 +14,7 @@ const app = express();
 const rawJson = express.raw({ type: "application/json", limit: "1mb" });
 
 
-app.post('/webhooks/clerk', (req, res) => {
+app.post('/webhooks/clerk', rawJson, (req, res) => {
   void clerkWebhookHandler(req, res);
 });
 
