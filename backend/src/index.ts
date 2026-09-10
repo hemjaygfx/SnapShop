@@ -25,7 +25,7 @@ app.use(express.json());
 app.use(cors());
 app.use(clerkMiddleware());
 
-app.get("/health", (req, res) => {
+app.get("/health", (_req, res) => {
   res.json({OK: true});
 });
 
