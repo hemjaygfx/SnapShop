@@ -6,6 +6,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { clerkMiddleware } from '@clerk/express';
 import { clerkWebhookHandler } from './webhooks/clerk';
+import { polarWebhookHandler } from './webhooks/polar';
 import { getEnv } from './lib/env';
 import keepAliveCron from './lib/cron';
 
