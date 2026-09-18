@@ -7,6 +7,7 @@ import HomePage from "./pages/HomePage";
 import OrdersPage from "./pages/OrdersPage";
 import CartPage from "./pages/CartPage";
 import CheckoutReturnPage from "./pages/CheckoutReturnPage";
+import ProductDetailPage from "./pages/ProductDetailPage";
 
 function App() {
   const { isLoaded, isSignedIn } = useAuth();
@@ -20,8 +21,8 @@ function App() {
         <Route path="/cart" element={<CartPage />} />
         <Route path="/orders" element={isSignedIn ? <OrdersPage /> : <Navigate to={"/"} replace />} />
         <Route path="/checkout/return" element={<CheckoutReturnPage />} />
+        <Route path="/product/:slug" element={<ProductDetailPage />} />
 
-        {/* <Route path="/product/:slug" element={<ProductDetailPage />} /> */}
         {/* <Route path="/demo-sentry" element={<SentryDemoPage />} /> */}
         {/* <Route path="/orders/:id/call" element={isSignedIn ? <OrderVideoPage /> : <Navigate to={"/"} replace />} /> */}
         {/* <Route path="/admin" element={isSignedIn ? <AdminProductsPage /> : <Navigate to="/" replace />} /> */}
