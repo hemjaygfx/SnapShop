@@ -6,7 +6,10 @@ import { Routes, Route, Navigate } from "react-router";
 import HomePage from "./pages/HomePage";
 import OrdersPage from "./pages/OrdersPage";
 import CartPage from "./pages/CartPage";
-import CheckoutReturnPage from "./pages/CheckoutReturnPage";``
+import CheckoutReturnPage from "./pages/CheckoutReturnPage";
+import ProductDetailPage from "./pages/ProductDetailPage";
+
+
 
 function App() {
   const { isLoaded, isSignedIn } = useAuth();
