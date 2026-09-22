@@ -76,6 +76,14 @@ async function fulfillCheckoutSession(
 
     await tx.delete(checkoutSessions).where(eq(checkoutSessions.id, sessionId));
 
+    console.info("[polar-webhook] fulfilled checkout", {
+      orderId: order.id,
+      userId: session.userId,
+      totalCents: session.totalCents,
+      polarOrderId: polarOrderId ?? null,
+      polarCheckoutId: checkoutId ?? session.polarCheckoutId ?? null,
+    });
+
     return true;
   });
 }
@@ -83,12 +91,16 @@ async function fulfillCheckoutSession(
 export async function polarWebhookHandler(req: Request, res: Response) {
   const env = getEnv();
 
-  try {
-    if (!env.POLAR_WEBHOOK_SECRET) {
-      res.status(503).send("Polar webhooks not configured");
-      return;
-    }
+  // Fast-fail 503 before any parsing if the webhook secret is missing — this
+  // is an operator error, not a webhook payload error. Reporting 4xx would
+  // falsely make Polar think the payload was bad and trigger unnecessary
+  // retries against a broken config.
+  if (!env.POLAR_WEBHOOK_SECRET) {
+    res.status(503).send("Polar webhooks not configured");
+    return;
+  }
 
+  try {
     const raw = req.body instanceof Buffer ? req.body : Buffer.from(String(req.body));
     const wh = new Webhook(Buffer.from(env.POLAR_WEBHOOK_SECRET, "utf8").toString("base64"));
 
@@ -118,7 +130,28 @@ export async function polarWebhookHandler(req: Request, res: Response) {
         return;
       }
 
-      const sessionId = checkoutSessionIdFromMetadata(data);
+      let sessionId = checkoutSessionIdFromMetadata(data);
+
+      // Fallback: if metadata.checkout_session_id was dropped / empty, but we
+      // received Polar's checkout_id (always present on order.paid), reverse-
+      // match our local checkout_session via polar_checkout_id.
+      if (!sessionId && checkoutId) {
+        try {
+          const [row] = await db
+            .select({ id: checkoutSessions.id })
+            .from(checkoutSessions)
+            .where(eq(checkoutSessions.polarCheckoutId, checkoutId))
+            .limit(1);
+          if (row) sessionId = row.id;
+        } catch (dbErr) {
+          console.error(
+            "Polar order.paid: DB lookup for fallback checkout_session failed",
+            { checkoutId, err: dbErr },
+          );
+          res.status(500).json({ error: "Internal server error" });
+          return;
+        }
+      }
 
       if (sessionId) {
         const ok = await fulfillCheckoutSession(sessionId, polarOrderId, checkoutId);
@@ -141,11 +174,34 @@ export async function polarWebhookHandler(req: Request, res: Response) {
         res.status(500).json({ error: "Checkout fulfillment failed" });
         return;
       }
+
+      console.warn("Polar order.paid: no matching checkout_session found", {
+        polarOrderId,
+        checkoutId,
+      });
     }
 
     res.json({ ok: true });
   } catch (err) {
-    console.error("Polar webhook error", err);
-    res.status(400).json({ error: "Invalid webhook" });
+    // Distinguish signature/verification/payload-parse errors (400, retryable
+    // from Polar with a backoff) from any other unexpected failure (e.g. DB
+    // outage during alreadyPaid/fulfill) which is a 500 so Polar retries.
+    const msg = err instanceof Error ? err.message : String(err);
+    const isPayloadError =
+      /webhook/i.test(msg) ||
+      /signature/i.test(msg) ||
+      /verify/i.test(msg) ||
+      msg.includes("JSON");
+
+    console.error(
+      `Polar webhook ${isPayloadError ? "payload" : "unexpected"} error`,
+      err,
+    );
+
+    if (isPayloadError) {
+      res.status(400).json({ error: "Invalid webhook" });
+    } else {
+      res.status(500).json({ error: "Internal server error" });
+    }
   }
 }
