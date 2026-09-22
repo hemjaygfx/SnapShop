@@ -1,5 +1,5 @@
 
-import { useSearchParams } from "react-router";
+import { useSearchParams } from "react-router-dom";
 import { apiFetch } from "../lib/api.js";
 import { useQuery } from "@tanstack/react-query";
 
