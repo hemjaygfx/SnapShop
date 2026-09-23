@@ -21,13 +21,13 @@
  */
 function buildNorthwindTextLayer({ w, h }) {
   const maxDim = Math.max(w != null && w > 0 ? w : 0, h != null && h > 0 ? h : 0, 200);
-  let fs = 28;
-  if (maxDim <= 180) fs = 11;
-  else if (maxDim <= 240) fs = 13;
-  else if (maxDim <= 400) fs = 16;
-  else if (maxDim <= 700) fs = 22;
-  else fs = 30;
-  return `l-text,i-Northwind,fs-${fs},co-FFFFFF,bg-0F172A90,pa-8_12,lx-N14,ly-14,lap-top_right,l-end`;
+  let fontSize;
+  if (maxDim <= 180) fontSize = 11;
+  else if (maxDim <= 240) fontSize = 13;
+  else if (maxDim <= 400) fontSize = 16;
+  else if (maxDim <= 700) fontSize = 22;
+  else fontSize = 30;
+  return `l-text,i-Northwind,fs-${fontSize},co-FFFFFF,bg-0F172A90,pa-8_12,lx-N14,ly-14,lap-top_right,l-end`;
 }
 
 /**

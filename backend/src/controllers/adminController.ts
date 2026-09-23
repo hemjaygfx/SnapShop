@@ -55,6 +55,13 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
     }
     const user = await getLocalUser(userId);
 
+    // If the Clerk user exists but the local DB row hasn't been created yet,
+    // treat it as a transient sync issue rather than an authorization failure.
+    if (!user) {
+      res.status(503).json({ error: "Account not synced yet" });
+      return;
+    }
+
     if (!isAdmin(user.role)) {
       res.status(403).json({ error: "Admin only" });
       return;

@@ -1,5 +1,6 @@
 
 import { useAdminProductsPage } from "../hooks/useAdminProductsPage.js";
+import { Navigate } from "react-router";
 import { AdminProductsTableSkeleton } from "../components/LoadingSkeletons.jsx";
 import { IK_PRESETS, imageKitOptimizedUrl } from "../lib/imagekitUrl.js";
 import { PackageIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";

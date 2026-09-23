@@ -1,5 +1,5 @@
 
-import { Show, SignInButton, SignUpButton, useAuth, UserButton } from "@clerk/react";
+import { useAuth } from "@clerk/react";
 import PageLoader from "./components/PageLoader";
 import Layout from "./components/Layout";
 import { Routes, Route, Navigate } from "react-router";
