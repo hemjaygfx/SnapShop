@@ -1,4 +1,3 @@
-
 import { useAuth } from "@clerk/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -24,7 +23,6 @@ export function useAdminProductsPage() {
     enabled: isSignedIn && isAdmin,
   });
 
-  // this mutation will either update or create a product
   const saveMutation = useMutation({
     mutationFn: async ({ body, id }) => {
       if (id) {
