@@ -36,6 +36,7 @@ function App() {
         <Route path="/checkout/return" element={<CheckoutReturnPage />} />
         <Route path="/product/:slug" element={<ProductDetailPage />} />
         <Route path="/demo-sentry" element={<SentryDemoPage />} />
+        <Route path="/orders/:id/call" element={isSignedIn ? <OrderVideoPage /> : <Navigate to={"/"} replace />} />
 
         
         {/* NESTED ROUTES */}
@@ -44,7 +45,6 @@ function App() {
           <Route path="chat" element={<OrderChatPage />} />
         </Route>
         
-        {/* <Route path="/orders/:id/call" element={isSignedIn ? <OrderVideoPage /> : <Navigate to={"/"} replace />} /> */}
         {/* <Route path="/admin" element={isSignedIn ? <AdminProductsPage /> : <Navigate to="/" replace />} /> */}
         {/* </Route> */}
       </Routes>
