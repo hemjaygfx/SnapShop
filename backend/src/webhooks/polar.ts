@@ -1,9 +1,11 @@
 
 import type { Request, Response } from "express";
 import { getEnv } from "../lib/env.js";
-import { checkoutSessions, orderItems, orders } from "../db/schema.js";
-import { eq } from "drizzle-orm";
-import { db } from "../db/index.js";
+import {
+  alreadyPaid,
+  findSessionByPolarCheckoutId,
+  fulfillCheckoutSession,
+} from "../lib/fulfillment.js";
 import { Webhook } from "standardwebhooks";
 
 function headerString(headers: Request["headers"], name: string) {
@@ -16,76 +18,6 @@ function checkoutSessionIdFromMetadata(order: Record<string, unknown>) {
   if (!metadata || typeof metadata !== "object") return undefined;
   const sessionId = (metadata as Record<string, unknown>).checkout_session_id;
   return typeof sessionId === "string" ? sessionId : undefined;
-}
-
-async function alreadyPaid(polarOrderId?: string, checkoutId?: string) {
-  if (polarOrderId) {
-    const [row] = await db
-      .select()
-      .from(orders)
-      .where(eq(orders.polarOrderId, polarOrderId))
-      .limit(1);
-    if (row?.status === "paid") return true;
-  }
-  if (checkoutId) {
-    const [row] = await db
-      .select()
-      .from(orders)
-      .where(eq(orders.polarCheckoutId, checkoutId))
-      .limit(1);
-    if (row?.status === "paid") return true;
-  }
-  return false;
-}
-
-async function fulfillCheckoutSession(
-  sessionId: string,
-  polarOrderId: string | undefined,
-  checkoutId: string | undefined,
-) {
-  return await db.transaction(async (tx) => {
-    const [session] = await tx
-      .select()
-      .from(checkoutSessions)
-      .where(eq(checkoutSessions.id, sessionId))
-      .for("update");
-
-    if (!session) return false;
-
-    const [order] = await tx
-      .insert(orders)
-      .values({
-        userId: session.userId,
-        status: "paid",
-        totalCents: session.totalCents,
-        polarCheckoutId: checkoutId ?? session.polarCheckoutId ?? null,
-        ...(polarOrderId ? { polarOrderId } : {}),
-      })
-      .returning();
-
-    if (session.lines.length) {
-      await tx.insert(orderItems).values(
-        session.lines.map((line) => ({
-          orderId: order.id,
-          productId: line.productId,
-          quantity: line.quantity,
-          unitPriceCents: line.unitPriceCents,
-        })),
-      );
-    }
-
-    await tx.delete(checkoutSessions).where(eq(checkoutSessions.id, sessionId));
-
-    console.info("[polar-webhook] fulfilled checkout", {
-      orderId: order.id,
-      userId: session.userId,
-      totalCents: session.totalCents,
-      polarOrderId: polarOrderId ?? null,
-      polarCheckoutId: checkoutId ?? session.polarCheckoutId ?? null,
-    });
-
-    return true;
-  });
 }
 
 export async function polarWebhookHandler(req: Request, res: Response) {
@@ -125,6 +57,11 @@ export async function polarWebhookHandler(req: Request, res: Response) {
       const polarOrderId = typeof data.id === "string" ? data.id : undefined;
       const checkoutId = typeof data.checkout_id === "string" ? data.checkout_id : undefined;
 
+      // NOTE: this pre-transaction check is an optimization only. The
+      // correctness boundary is the inside-transaction existence check + the
+      // 23505 unique-violation guard in `fulfillCheckoutSession`. We keep
+      // this short-circuit to avoid starting a DB transaction for obvious
+      // replayed events.
       if (await alreadyPaid(polarOrderId, checkoutId)) {
         res.json({ ok: true, duplicate: true });
         return;
@@ -137,12 +74,8 @@ export async function polarWebhookHandler(req: Request, res: Response) {
       // match our local checkout_session via polar_checkout_id.
       if (!sessionId && checkoutId) {
         try {
-          const [row] = await db
-            .select({ id: checkoutSessions.id })
-            .from(checkoutSessions)
-            .where(eq(checkoutSessions.polarCheckoutId, checkoutId))
-            .limit(1);
-          if (row) sessionId = row.id;
+          const found = await findSessionByPolarCheckoutId(checkoutId);
+          if (found) sessionId = found.id;
         } catch (dbErr) {
           console.error(
             "Polar order.paid: DB lookup for fallback checkout_session failed",
@@ -154,13 +87,22 @@ export async function polarWebhookHandler(req: Request, res: Response) {
       }
 
       if (sessionId) {
-        const ok = await fulfillCheckoutSession(sessionId, polarOrderId, checkoutId);
+        const result = await fulfillCheckoutSession(sessionId, polarOrderId, checkoutId);
 
-        if (ok) {
+        if (result === true) {
           res.json({ ok: true });
           return;
         }
 
+        // Idempotent duplicate: either the inside-tx existence check caught
+        // it, or we lost the race and the 23505 guard confirmed a paid order
+        // exists. Respond 200 so Polar stops retrying.
+        if (result === "duplicate") {
+          res.json({ ok: true, duplicate: true });
+          return;
+        }
+
+        // result === false: checkout_session no longer existed at tx start
         if (await alreadyPaid(polarOrderId, checkoutId)) {
           res.json({ ok: true, duplicate: true });
           return;

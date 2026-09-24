@@ -4,22 +4,32 @@ import { getEnv } from "../lib/env";
 import z from "zod";
 import { getAuth } from "@clerk/express";
 import { getLocalUser } from "../lib/users";
+import { isStaff } from "../lib/roles";
 import { db } from "../db";
 import { CheckoutSessionLine, checkoutSessions, products } from "../db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { polarCreateCheckout } from "../lib/polar";
+import {
+  findOrderIdByPolarCheckoutId,
+  findSessionByPolarCheckoutId,
+  fulfillCheckoutSession,
+} from "../lib/fulfillment";
 
 const env = getEnv();
+
+const MAX_QTY = 99;
+const MAX_LINES = 50;
 
 const cartSchema = z.object({
   items: z
     .array(
       z.object({
         productId: z.string().uuid(),
-        quantity: z.number().int().positive(),
+        quantity: z.number().int().positive().max(MAX_QTY),
       }),
     )
-    .min(1),
+    .min(1)
+    .max(MAX_LINES),
 });
 
 export async function createCheckout(req: Request, res: Response, next: NextFunction) {
@@ -120,6 +130,71 @@ export async function createCheckout(req: Request, res: Response, next: NextFunc
       .where(eq(checkoutSessions.id, session.id));
 
     res.json({ checkoutUrl: checkout.url });
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function recoverByPolarCheckoutId(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  try {
+    const { userId, isAuthenticated } = getAuth(req);
+    if (!isAuthenticated || !userId) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const polarCheckoutId = req.params.checkoutId;
+    if (typeof polarCheckoutId !== "string" || polarCheckoutId.trim().length === 0) {
+      res.status(400).json({ error: "Invalid checkout id" });
+      return;
+    }
+
+    const localUser = await getLocalUser(userId);
+    if (!localUser) {
+      res.status(503).json({ error: "Account not synced yet" });
+      return;
+    }
+
+    const session = await findSessionByPolarCheckoutId(polarCheckoutId);
+    if (!session) {
+      const orderId = await findOrderIdByPolarCheckoutId(polarCheckoutId);
+      if (orderId) {
+        res.json({ ok: true, orderId, duplicate: true, note: "already fulfilled" });
+        return;
+      }
+      res.status(404).json({ error: "No pending checkout found for this id" });
+      return;
+    }
+
+    if (session.userId !== localUser.id && !isStaff(localUser.role)) {
+      res.status(403).json({ error: "Not your checkout" });
+      return;
+    }
+
+    const result = await fulfillCheckoutSession(session.id, undefined, polarCheckoutId);
+
+    if (result === true || result === "duplicate") {
+      const orderId = await findOrderIdByPolarCheckoutId(polarCheckoutId);
+      res.json({ ok: true, orderId, duplicate: result === "duplicate" });
+      return;
+    }
+
+    // result === false: session vanished between our lookup and the tx start.
+    // If an order now exists under this polarCheckoutId, it was a concurrent
+    // fulfill and we treat it as a clean idempotent success.
+    const orderId = await findOrderIdByPolarCheckoutId(polarCheckoutId);
+    if (orderId) {
+      res.json({ ok: true, orderId, duplicate: true });
+      return;
+    }
+
+    res
+      .status(404)
+      .json({ error: "Checkout no longer exists and no order was created" });
   } catch (e) {
     next(e);
   }

@@ -6,20 +6,41 @@ import { isAdmin } from "../lib/roles";
 import ImageKit from "@imagekit/nodejs";
 import { getEnv } from "../lib/env";
 import { db } from "../db";
-import { orderItems, products } from "../db/schema";
+import { orderItems, products, users } from "../db/schema";
 import { count, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { deleteImageKitAsset } from "../lib/imagekit";
 
+type LocalUserRow = typeof users.$inferSelect;
+
+/**
+ * Local extension of the Express Request type used only inside this file.
+ * After `requireAdmin` succeeds, `req.localUser` is guaranteed to be the
+ * non-null admin row from our local `users` table. Downstream handlers in
+ * this module may read it instead of re-querying (and accidentally skipping
+ * the null-sync check again).
+ */
+type AdminRequest = Request & { localUser: LocalUserRow };
+
 const env = getEnv();
 
+const SLUG_MAX = 120;
+const NAME_MAX = 200;
+const CATEGORY_MAX = 100;
+const DESC_MAX = 10_000;
+const PRICE_MAX_CENTS = 10_000_000; // ~$100k
+
+// URL-safe kebab-case slug: lowercase alphanumeric segments separated by single
+// hyphens. Matches typical storefront routing conventions.
+const SLUG_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 const productCreate = z.object({
-  slug: z.string().min(1),
-  name: z.string().min(1),
-  category: z.string().min(1).default("General"),
-  description: z.string().default(""),
-  priceCents: z.number().int().positive(),
-  currency: z.string().min(1).default("usd"),
+  slug: z.string().min(1).max(SLUG_MAX).regex(SLUG_REGEX, "Invalid slug"),
+  name: z.string().min(1).max(NAME_MAX),
+  category: z.string().min(1).max(CATEGORY_MAX).default("General"),
+  description: z.string().max(DESC_MAX).default(""),
+  priceCents: z.number().int().positive().max(PRICE_MAX_CENTS),
+  currency: z.string().min(3).max(3).toLowerCase().default("usd"),
   imageUrl: z
     .union([z.string().url(), z.literal("")])
     .optional()
@@ -57,6 +78,8 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
 
     // If the Clerk user exists but the local DB row hasn't been created yet,
     // treat it as a transient sync issue rather than an authorization failure.
+    // NOTE: we explicitly `return` right after sending the response so there
+    // is no chance of a stray `next()` double-sending headers.
     if (!user) {
       res.status(503).json({ error: "Account not synced yet" });
       return;
@@ -66,6 +89,11 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
       res.status(403).json({ error: "Admin only" });
       return;
     }
+
+    // Attach the fully-validated local user to the request so downstream
+    // handlers in this module can read it without a second DB round-trip and
+    // without the risk of skipping the null-sync check on a re-fetch.
+    (req as AdminRequest).localUser = user;
     next();
   } catch (e) {
     next(e);

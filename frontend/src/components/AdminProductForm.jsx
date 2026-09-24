@@ -3,6 +3,52 @@ import { useState } from "react";
 import { uploadImageToImageKit } from "../lib/imagekitUpload.js";
 import { IK_PRESETS, imageKitOptimizedUrl } from "../lib/imagekitUrl.js";
 
+const SLUG_MAX = 120;
+const NAME_MAX = 200;
+const CATEGORY_MAX = 100;
+const DESC_MAX = 10_000;
+const PRICE_MAX_CENTS = 10_000_000; // ~$100k
+const SLUG_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+function validateBody({ slug, name, category, description, priceCents }) {
+  const errors = {};
+
+  const slugTrimmed = (slug ?? "").trim();
+  if (!slugTrimmed) {
+    errors.slug = "Slug is required";
+  } else if (slugTrimmed.length > SLUG_MAX) {
+    errors.slug = `Slug must be ${SLUG_MAX} characters or fewer`;
+  } else if (!SLUG_REGEX.test(slugTrimmed)) {
+    errors.slug = "Use lowercase letters, numbers, and single hyphens only (e.g. my-product-1)";
+  }
+
+  const nameTrimmed = (name ?? "").trim();
+  if (!nameTrimmed) {
+    errors.name = "Name is required";
+  } else if (nameTrimmed.length > NAME_MAX) {
+    errors.name = `Name must be ${NAME_MAX} characters or fewer`;
+  }
+
+  const categoryTrimmed = (category ?? "").trim() || "General";
+  if (categoryTrimmed.length > CATEGORY_MAX) {
+    errors.category = `Category must be ${CATEGORY_MAX} characters or fewer`;
+  }
+
+  if ((description ?? "").length > DESC_MAX) {
+    errors.description = `Description must be ${DESC_MAX} characters or fewer`;
+  }
+
+  if (!Number.isFinite(priceCents) || priceCents <= 0) {
+    errors.priceCents = "Price must be greater than 0";
+  } else if (!Number.isInteger(priceCents)) {
+    errors.priceCents = "Price must resolve to a whole number of cents";
+  } else if (priceCents > PRICE_MAX_CENTS) {
+    errors.priceCents = `Price must be at most $${(PRICE_MAX_CENTS / 100).toFixed(0)}`;
+  }
+
+  return errors;
+}
+
 export function AdminProductForm({ initial, saving, error, getToken, onCancel, onSubmit }) {
   const [slug, setSlug] = useState(initial?.slug ?? "");
   const [name, setName] = useState(initial?.name ?? "");
@@ -15,23 +61,31 @@ export function AdminProductForm({ initial, saving, error, getToken, onCancel, o
   const [active, setActive] = useState(initial?.active ?? true);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadError, setUploadError] = useState(null);
+  const [formErrors, setFormErrors] = useState({});
 
   function handleSubmit(e) {
     e.preventDefault();
     const dollars = Number.parseFloat(priceCents);
-    if (Number.isNaN(dollars) || dollars <= 0) return;
+    const cents = Number.isFinite(dollars) ? Math.round(dollars * 100) : NaN;
 
     const body = {
       slug: slug.trim(),
       name: name.trim(),
       category: category.trim() || "General",
       description: description.trim(),
-      priceCents: Math.round(dollars * 100),
+      priceCents: cents,
       currency: currency.trim().toLowerCase(),
       imageUrl: imageUrl.trim() || null,
       imageKitFileId: imageKitFileId.trim() || null,
       active,
     };
+
+    const validation = validateBody(body);
+    if (Object.keys(validation).length > 0) {
+      setFormErrors(validation);
+      return;
+    }
+    setFormErrors({});
 
     if (initial) {
       const patch = {};
@@ -91,49 +145,61 @@ export function AdminProductForm({ initial, saving, error, getToken, onCancel, o
       <label className="form-control w-full">
         <span className="label-text">Slug</span>
         <input
-          className="input input-bordered w-full"
+          className={`input input-bordered w-full ${formErrors.slug ? "input-error" : ""}`}
           value={slug}
           onChange={(e) => setSlug(e.target.value)}
           required
           disabled={Boolean(initial)}
         />
+        {formErrors.slug ? (
+          <span className="mt-1 text-xs text-error" role="alert">{formErrors.slug}</span>
+        ) : null}
       </label>
 
       <label className="form-control w-full">
         <span className="label-text">Name</span>
         <input
-          className="input input-bordered w-full"
+          className={`input input-bordered w-full ${formErrors.name ? "input-error" : ""}`}
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
         />
+        {formErrors.name ? (
+          <span className="mt-1 text-xs text-error" role="alert">{formErrors.name}</span>
+        ) : null}
       </label>
 
       <label className="form-control w-full">
         <span className="label-text">Category</span>
         <input
-          className="input input-bordered w-full"
+          className={`input input-bordered w-full ${formErrors.category ? "input-error" : ""}`}
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           placeholder="e.g. Audio, Workspace"
           required
         />
+        {formErrors.category ? (
+          <span className="mt-1 text-xs text-error" role="alert">{formErrors.category}</span>
+        ) : null}
       </label>
 
       <label className="form-control w-full">
         <span className="label-text">Description</span>
         <textarea
-          className="textarea textarea-bordered h-24 w-full"
+          className={`textarea textarea-bordered h-24 w-full ${formErrors.description ? "textarea-error" : ""}`}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />
+        {formErrors.description ? (
+          <span className="mt-1 text-xs text-error" role="alert">{formErrors.description}</span>
+        ) : null}
       </label>
 
       <div className="grid grid-cols-2 gap-2">
         <label className="form-control">
           <span className="label-text">Price (USD)</span>
           <input
-            className="input input-bordered"
+            className={`input input-bordered ${formErrors.priceCents ? "input-error" : ""}`}
             type="number"
             step="0.01"
             min="0.01"
@@ -141,6 +207,9 @@ export function AdminProductForm({ initial, saving, error, getToken, onCancel, o
             onChange={(e) => setPriceCents(e.target.value)}
             required
           />
+          {formErrors.priceCents ? (
+            <span className="mt-1 text-xs text-error" role="alert">{formErrors.priceCents}</span>
+          ) : null}
         </label>
 
         <label className="form-control">
